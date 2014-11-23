@@ -2,11 +2,12 @@
 from driver import Driver
 # from robot.output import LOGGER
 import logging, time, sys
+from ConfigParser import SafeConfigParser
 # log_path = '/home/m/repo/db/created_suites.log'
-db_path = '/home/m/repo/db/testcases3.sqlite'
+# db_path = '/home/m/repo/db/testcases3.sqlite'
 # logging.basicConfig(filename=log_path, format='%(message)s\n', level=logging.DEBUG)
 # HIERARCHY_PREFIX = '/test/csit/suites/'
-HIERARCHY_PREFIX = '/home/m/repo/'
+# HIERARCHY_PREFIX = '/home/m/repo/'
 
 
 def get_plan_name(path):
@@ -15,31 +16,48 @@ def get_plan_name(path):
 	plan_name = path[:path.find('/')]
 	return plan_name
 
+def read_config(server_name, https=False):
+	parser = SafeConfigParser()
+	parser.read('config.ini')
+	url = 'url'
+	if https:
+		url = 'urls'
+	settings = {}
+	settings['username'] = parser.get(server_name, 'username')
+	settings['password'] = parser.get(server_name, 'password')
+	settings['url'] = parser.get(server_name, url)
+	settings['database'] = parser.get('database', 'dbpath')
+	settings['prefix'] = parser.get(server_name, 'HIERARCHY_PREFIX')
+	global HIERARCHY_PREFIX
+	HIERARCHY_PREFIX = settings['prefix']
+	return settings
 
 class Listener:
 
 	ROBOT_LISTENER_API_VERSION = 2 # Do Not Change This
 
-	def __init__(self, protocol, testopia_url, build, environment):
+	# def __init__(self, protocol, testopia_url, build, environment):
+	def __init__(self, build, environment):
 		'''
 		Args:
 			protocol (str): http or https
 			(because arg are seprated by ":" in issueing pybot command with listener in http://address http is one arg and //address is another)
 		'''
-		username = 'mohza'
-		password = ''
+		settings = read_config('localbugz')
+		username = settings['username']
 		# self.PLAN_ID = 1 # --> product id too # todo : where should it come from?
 		self.MANAGER = username # login of the manager # todo: change to string
 
 
-		testopia_url = protocol + ':' + testopia_url # see docstring
-		self.driver = Driver(testopia_url, username, password)
+		# testopia_url = protocol + ':' + testopia_url # see docstring
+		testopia_url = settings['url']
+		self.driver = Driver(testopia_url, username, settings['password'])
 		self.build = build
 		self.environment = environment
 		self.driver.set_build_and_environment(build, environment)
 		self.no_run_id = False
 
-		self.conn = Connector(db_path)
+		self.conn = Connector(settings['database'])
 
 	def start_suite(self, name, attrs):
 		'''suite Documentation must start with "${run_id};;".
