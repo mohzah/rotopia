@@ -4,19 +4,30 @@ from driver import Driver
 import logging, time, sys
 from ConfigParser import SafeConfigParser
 # log_path = '/home/m/repo/db/created_suites.log'
-# db_path = '/home/m/repo/db/testcases3.sqlite'
 # logging.basicConfig(filename=log_path, format='%(message)s\n', level=logging.DEBUG)
-# HIERARCHY_PREFIX = '/test/csit/suites/'
-# HIERARCHY_PREFIX = '/home/m/repo/'
-
 
 def get_plan_name(path):
-	idx = path.find(HIERARCHY_PREFIX)
+	'''Returns directory name of the suite.
+
+	based on the path of test suite returns the top level directory name to be used as plan name
+
+	Args:
+		path (string): absolute path of the suite
+	'''
+	idx = path.find(HIERARCHY_PREFIX) # HIERARCHY_PREFIX is read from config file
 	path = path[idx+len(HIERARCHY_PREFIX):]
 	plan_name = path[:path.find('/')]
 	return plan_name
 
 def read_config(server_name, https=False):
+	'''
+	different server names can be used for naming different sections in config file. hence,
+	config file can contian different settings for different servers.
+
+	Args:
+		server_name (str): specifies which server url and credentials to be used
+		https (bool): if true, uses url started with "https" in the config file, named "urls"
+	'''
 	parser = SafeConfigParser()
 	parser.read('config.ini')
 	url = 'url'
@@ -33,23 +44,26 @@ def read_config(server_name, https=False):
 	return settings
 
 class Listener:
+	'''
+	http://robotframework.org/robotframework/latest/RobotFrameworkUserGuide.html#using-listener-interface
+	'''
 
 	ROBOT_LISTENER_API_VERSION = 2 # Do Not Change This
 
-	# def __init__(self, protocol, testopia_url, build, environment):
 	def __init__(self, build, environment):
 		'''
+		Parameters come from invoking command i.e. variables seprated by ":" in pybot command
+
 		Args:
-			protocol (str): http or https
-			(because arg are seprated by ":" in issueing pybot command with listener in http://address http is one arg and //address is another)
+			build (str): build name
+			environment (str): environment name
 		'''
 		settings = read_config('localbugz')
 		username = settings['username']
-		# self.PLAN_ID = 1 # --> product id too # todo : where should it come from?
-		self.MANAGER = username # login of the manager # todo: change to string
+		# login of the manager
+		# todo: omit it, make driver api more consistent
+		self.MANAGER = username
 
-
-		# testopia_url = protocol + ':' + testopia_url # see docstring
 		testopia_url = settings['url']
 		self.driver = Driver(testopia_url, username, settings['password'])
 		self.build = build
@@ -60,40 +74,42 @@ class Listener:
 		self.conn = Connector(settings['database'])
 
 	def start_suite(self, name, attrs):
-		'''suite Documentation must start with "${run_id};;".
-
-		(can NOT use tags for instead of Documentation, since it is not passed in attrs)
-		Documentation for test suite can be set in setting table. for more info:
-		http://robotframework.googlecode.com/svn/tags/robotframework-2.1.3/doc/userguide/RobotFrameworkUserGuide.html#id168
 		'''
-		doc = attrs['doc']
+		http://robotframework.org/robotframework/latest/RobotFrameworkUserGuide.html#listener-interface-method-signatures
+		'''
+		doc = attrs['doc']	# doc is <type 'unicode'>
 		self.absolute_path = attrs['source']
 		tests = attrs['tests']	# empty suits return empty list
-		# logging.info(self.absolute_path) # todo: doens't work!?
-		if len(tests) > 0:
+		if tests:	# empty list -> False	any list other than empty list -> True
 			if not self.conn.is_exported_suite(self.absolute_path):
+				# This is the first time this suite is executed and,
 				plan_name = get_plan_name(self.absolute_path)
 				plan_id = None
 				if self.conn.is_exported_plan(plan_name):
+					# a plan is already created for the suites in this directory
 					plan_id = self.conn.get_PlanID(plan_name)
 				else:
+					# no plan has been created earlier that this suite belong to
+					# plans are not created for every new suite but for new suites
+					# with different top level directory
 					plan_id = self.driver.create_plan(plan_name)['plan_id']
 					self.conn.insert_plan_as_exported(plan_name, plan_id)
-				# self.driver.get_plan_id(plan_text)
+				# For every new suite a Run will be created:
 				run = self.driver.create_run(plan_id, str(self.build), self.MANAGER, summary=str(doc))
 				self.run_id = run['run_id']
-				# logging.info(self.absolute_path)
 				self.conn.insert_as_exported(self.absolute_path, self.run_id)
 			else:
+				# This is not a new suite and a Run already exist for it
 				self.run_id = self.conn.get_RunID(self.absolute_path)
 
 	def start_test(self, name, attrs):#todo: update doc string
 		'''case [Documentation] must start with "case_id;;"
 		'''
 		self.newCase = False
-		caselongname = attrs['longname'] #todo: should change to id, should work in new version
+		caselongname = attrs['longname'] #todo: should change to 'id', should work in new version of robot
 		
 		if not self.conn.is_exported_case(caselongname, self.absolute_path):
+			# This case is newly added to the test suite or is the first time executed
 			self.newCase = True
 			self.actions = []
 			self.results = []
@@ -106,7 +122,7 @@ class Listener:
 				self.driver.add_to_run(self.case_id, self.run_id)
 				self.conn.insert_case_as_exported(caselongname, self.absolute_path, self.case_id)
 			except:
-				print "Unexpected error:", sys.exc_info()[0]
+				print "Unexpected error in new TestCase processing:", sys.exc_info()[0]
 				raise
 		else:
 			self.case_id = self.conn.get_CaseID(caselongname, self.absolute_path)
@@ -119,18 +135,21 @@ class Listener:
 		if status == 'PASS':
 			self.driver.caserun_passed(self.run_id, self.case_id)
 		elif status == 'FAIL':
-			#notes = attrs['message']
 			self.driver.caserun_failed(self.run_id, self.case_id)
 		
 		if self.newCase:
-			def listify(elements):
-				'''converts a list of <li>...</li> elements to a <ol><li>...</li>...</ol> string
+			# Steps and results for new Case will be collected in a list by using start_keyword method
+			# list will be converted to a string with a html list format and inserted in Testopia
+			def make_html_list(elements):
+				'''
+				converts a list of "<li>...</li>" strings (i.e. collected list) to
+				a <ol><li>...</li>...</ol> string
 				'''
 				elements = ''.join(elements)
 				return '<ol>%s</ol>' % elements
 
-			action = listify(self.actions)
-			result = listify(self.results)
+			action = make_html_list(self.actions)
+			result = make_html_list(self.results)
 			self.driver.update_case_action_result(self.case_id, action, result)
 		# clean up
 		self.case_id = None
