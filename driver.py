@@ -40,9 +40,7 @@ class Driver():
 				e.args += ("error: You are not logged in to the server\n",)
 				raise e
 		try:
-			# todo : eval? emmm, eval is not safe, must be replaced
-			eval_str = "self.server." + cmd + "(" + str(args) + ")"
-			return eval(eval_str)
+			return getattr(self.server, cmd)(args)
 		except xmlrpclib.Error, e:
 			print 'Fault code:', e.faultCode
 			print 'Message   :', e.faultString
