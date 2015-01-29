@@ -1,4 +1,4 @@
 rotopia
 =======
 
-A Robot Framework tool for incorporated Robot test cases and subsequently their result into Testopia.
+A Robot Framework tool for incorporating Robot test cases and subsequently their result into Testopia.
